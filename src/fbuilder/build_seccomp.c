@@ -20,7 +20,7 @@
 
 #include "fbuilder.h"
 
-#if 0
+//#if 0
 void build_seccomp(const char *fname, FILE *fp) {
 	assert(fname);
 	assert(fp);
@@ -79,7 +79,7 @@ void build_seccomp(const char *fname, FILE *fp) {
 
 	fclose(fp2);
 }
-#endif
+//#endif
 
 //***************************************
 // protocol
