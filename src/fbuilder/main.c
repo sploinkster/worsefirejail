@@ -16,112 +16,112 @@
  * You should have received a copy of the GNU General Public License along
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+ */
+
 #include "fbuilder.h"
-#include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <errno.h>
-#include <limits.h>
 
 int arg_debug = 0;
 int arg_appimage = 0;
-int arg_build_timeout = 0;
-
-static const char *const usage_str =
-	"Firejail profile builder\n"
-	"Usage: firejail [--debug] --build[=profile-file] [--build-timeout=SECONDS] program-and-arguments\n";
 
 static void usage(void) {
-	puts(usage_str);
+	fprintf(stderr, "Firejail profile builder\n");
+	fprintf(stderr, "Usage: firejail [--debug] --build[=profile-file] [--caps.keep=LIST] [--build-timeout=SECONDS] program-and-arguments\n");
+	exit(1);
+}
+
+static int startswith(const char *s, const char *pfx) {
+	return strncmp(s, pfx, strlen(pfx)) == 0;
 }
 
 int main(int argc, char **argv) {
-#if 0
-{
-system("cat /proc/self/status");
-int i;
-for (i = 0; i < argc; i++)
-	printf("*%s* ", argv[i]);
-printf("\n");
-}
-#endif
+	if (argc < 2)
+		usage();
 
-	int i;
-	int prog_index = 0;
-	FILE *fp = stdout;
-	char *prof_file = NULL;
+	FILE *outfp = stdout;
+	int have_build = 0;
+	int prog_index = -1;
 
-	// parse arguments and extract program index
-	for (i = 1; i < argc; i++) {
-		if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-?") ==0) {
-			usage();
-			return 0;
-		}
-		else if (strcmp(argv[i], "--debug") == 0)
+	for (int i = 1; i < argc; i++) {
+		const char *a = argv[i];
+
+		if (strcmp(a, "--debug") == 0) {
 			arg_debug = 1;
-		else if (strcmp(argv[i], "--appimage") == 0)
+			continue;
+		}
+		if (strcmp(a, "--appimage") == 0) {
 			arg_appimage = 1;
-		else if (strcmp(argv[i], "--build") == 0)
-			; // do nothing, this is passed down from firejail
-		else if (strncmp(argv[i], "--build=", 8) == 0) {
-			// this option is only supported for non-root users
-			//if (getuid() == 0) {
-			//	fprintf(stderr, "Error fbuild: --build=profile-name is not supported for root user.\n");
-			//	exit(1);
-			//}
-
-			// don't run if the file exists
-			if (access(argv[i] + 8, F_OK) == 0) {
-				fprintf(stderr, "Error fbuilder: the profile file already exists. Please use a different file name.\n");
-				exit(1);
-			}
-
-			// check file access
-			fp = fopen(argv[i] + 8, "w");
-			if (!fp) {
-				fprintf(stderr, "Error fbuilder: cannot open profile file.\n");
-				exit(1);
-			}
-			prof_file = argv[i] + 8;
+			continue;
 		}
-		else if (strncmp(argv[i], "--caps.keep=", 12) == 0)
-			; // accepted and forwarded by build_profile()
-		else if (strncmp(argv[i], "--build-timeout=", 16) == 0) {
-			const char *p = argv[i] + 16;
-			char *end = NULL;
 
-			errno = 0;
-			unsigned long v = strtoul(p, &end, 10);
-			if (errno != 0 || end == p || *end != '\0' || v == 0 || v > (unsigned long)INT_MAX) {
-				fprintf(stderr, "Error fbuilder: invalid --build-timeout value, expected seconds as a positive integer\n");
-				exit(1);
+		// build flag (optionally with =file)
+		if (strcmp(a, "--build") == 0 || startswith(a, "--build=")) {
+			have_build = 1;
+			if (startswith(a, "--build=")) {
+				const char *fname = a + strlen("--build=");
+				if (*fname == '\0')
+					usage();
+				outfp = fopen(fname, "w");
+				if (!outfp) {
+					fprintf(stderr, "Error fbuilder: cannot open %s: %s\n", fname, strerror(errno));
+					exit(1);
+				}
 			}
-			arg_build_timeout = (int) v;
+			continue;
 		}
-		else {
-			if (*argv[i] == '-') {
-				fprintf(stderr, "Error fbuilder: invalid program\n");
+
+		// accept these flags in build mode (fbuilder will read them again later)
+		if (startswith(a, "--caps.keep=")) {
+			continue;
+		}
+		if (strcmp(a, "--caps.keep") == 0) {
+			// consume the next arg if present
+			if (i + 1 >= argc)
 				usage();
-				exit(1);
-			}
+			i++;
+			continue;
+		}
+
+		if (startswith(a, "--build-timeout=")) {
+			continue;
+		}
+		if (strcmp(a, "--build-timeout") == 0) {
+			if (i + 1 >= argc)
+				usage();
+			i++;
+			continue;
+		}
+
+		// explicit end of options
+		if (strcmp(a, "--") == 0) {
+			if (i + 1 >= argc)
+				usage();
+			prog_index = i + 1;
+			break;
+		}
+
+		// first non-option is the program
+		if (a[0] != '-') {
 			prog_index = i;
 			break;
 		}
-	}
 
-	if (prog_index == 0) {
-		fprintf(stderr, "Error fbuilder: program and arguments required\n");
+		// unknown option
 		usage();
-		if (prof_file) {
-			fclose(fp);
-			int rv = unlink(prof_file);
-			(void) rv;
-		}
-		exit(1);
 	}
 
-	build_profile(argc, argv, prog_index, fp);
-	if (prof_file)
-		fclose(fp);
+	if (!have_build)
+		usage();
+	if (prog_index < 0 || prog_index >= argc)
+		usage();
+
+	build_profile(argc, argv, prog_index, outfp);
+
+	if (outfp != stdout)
+		fclose(outfp);
+
 	return 0;
 }
