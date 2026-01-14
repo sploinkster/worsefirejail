@@ -23,6 +23,7 @@
 
 #include "fbuilder.h"
 #include <sys/wait.h>
+#include <string.h>
 
 #define TRACE_OUTPUT "/tmp/firejail-trace.XXXXXX"
 
@@ -31,6 +32,16 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 	if (index >= argc) {
 		fprintf(stderr, "Error fbuilder: application name missing\n");
 		exit(1);
+	}
+
+	// pick up optional caps.keep passed to fbuilder, and forward it to the inner firejail
+	// example: --caps.keep=chown,net_bind_service,setuid,setgid
+	char *caps_keep_arg = NULL;
+	for (int j = 1; j < index; j++) {
+		if (strncmp(argv[j], "--caps.keep=", 12) == 0) {
+			caps_keep_arg = argv[j];
+			break;
+		}
 	}
 
 	char trace_output[] = TRACE_OUTPUT;
@@ -57,6 +68,8 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 	//cmd[curr_len++] = "--caps.drop=all";
 	cmd[curr_len++] = "--seccomp=!chroot";
 	cmd[curr_len++] = output;
+	if (caps_keep_arg)
+		cmd[curr_len++] = caps_keep_arg;
 	if (arg_appimage)
 		cmd[curr_len++] = "--appimage";
 
@@ -134,6 +147,8 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 
 		fprintf(fp, "#apparmor\t# if you have AppArmor running, try this one!\n");
 		//fprintf(fp, "caps.drop all\n");
+		if (caps_keep_arg)
+			fprintf(fp, "caps.keep %s\n", caps_keep_arg + 12);
 		fprintf(fp, "ipc-namespace\n");
 		fprintf(fp, "netfilter\n");
 		fprintf(fp, "#no3d\t# disable 3D acceleration\n");
