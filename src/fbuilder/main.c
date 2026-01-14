@@ -59,10 +59,10 @@ printf("\n");
 			; // do nothing, this is passed down from firejail
 		else if (strncmp(argv[i], "--build=", 8) == 0) {
 			// this option is only supported for non-root users
-			if (getuid() == 0) {
-				fprintf(stderr, "Error fbuild: --build=profile-name is not supported for root user.\n");
-				exit(1);
-			}
+			//if (getuid() == 0) {
+			//	fprintf(stderr, "Error fbuild: --build=profile-name is not supported for root user.\n");
+			//	exit(1);
+			//}
 
 			// don't run if the file exists
 			if (access(argv[i] + 8, F_OK) == 0) {
