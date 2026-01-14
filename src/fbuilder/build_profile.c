@@ -24,8 +24,33 @@
 #include "fbuilder.h"
 #include <sys/wait.h>
 #include <string.h>
+#include <signal.h>
+#include <errno.h>
+#include <unistd.h>
 
 #define TRACE_OUTPUT "/tmp/firejail-trace.XXXXXX"
+
+static volatile sig_atomic_t timeout_stage = 0; // 0 = not fired, 1 = TERM sent
+static pid_t timeout_pgid = -1;
+
+static void timeout_handler(int s) {
+	(void) s;
+
+	if (timeout_pgid <= 0)
+		return;
+
+	if (timeout_stage == 0) {
+		timeout_stage = 1;
+		// First stage: ask nicely
+		(void) kill(-timeout_pgid, SIGTERM);
+		// Give it a few seconds, then escalate if still alive
+		alarm(5);
+	}
+	else {
+		// Second stage: force it
+		(void) kill(-timeout_pgid, SIGKILL);
+	}
+}
 
 void build_profile(int argc, char **argv, int index, FILE *fp) {
 	// next index is the application name
@@ -90,22 +115,52 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 	if (child == -1)
 		errExit("fork");
 	if (child == 0) {
+		// make child its own process group so parent can kill the whole tree reliably
+		(void) setpgid(0, 0);
+
 		assert(cmd[0]);
 		int rv = execvp(cmd[0], cmd);
 		(void) rv;
 		errExit("execv");
 	}
 
+	// ensure process group is set (ignore errors if already set)
+	(void) setpgid(child, child);
+
+	// set up timeout handler (optional)
+	if (arg_build_timeout > 0) {
+		struct sigaction sa;
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = timeout_handler;
+		sigemptyset(&sa.sa_mask);
+		sa.sa_flags = SA_RESTART;
+		if (sigaction(SIGALRM, &sa, NULL) == -1)
+			errExit("sigaction");
+
+		timeout_stage = 0;
+		timeout_pgid = child;
+		alarm((unsigned) arg_build_timeout);
+	}
+
 	// wait for all processes to finish
 	int status;
-	waitpid(child, &status, 0);
-	//if (waitpid(child, &status, 0) != child)
-	//	errExit("waitpid");
+	while (waitpid(child, &status, 0) == -1) {
+		if (errno == EINTR)
+			continue;
+		errExit("waitpid");
+	}
+
+	// cancel any pending alarm
+	if (arg_build_timeout > 0) {
+		alarm(0);
+		timeout_pgid = -1;
+		timeout_stage = 0;
+	}
 
 	//if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 		if (fp == stdout)
 			printf("--- Built profile begins after this line ---\n");
-		fprintf(fp, "# Save this file as \"application.profile\" (change \"application\" with the\n");
+		fprintf(fp, "# Save this file as \"application.profile\" (change today's \"application\" with the\n");
 		fprintf(fp, "# program name) in ~/.config/firejail directory. Firejail will find it\n");
 		fprintf(fp, "# automatically every time you sandbox your application.\n#\n");
 		fprintf(fp, "# Run \"firejail application\" to test it. In the file there are\n");
