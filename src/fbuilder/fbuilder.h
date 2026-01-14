@@ -32,6 +32,7 @@
 // main.c
 extern int arg_debug;
 extern int arg_appimage;
+extern int arg_build_timeout;
 
 // build_profile.c
 void build_profile(int argc, char **argv, int index, FILE *fp);
