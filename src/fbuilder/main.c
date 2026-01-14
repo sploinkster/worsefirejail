@@ -19,13 +19,17 @@
 */
 #include "fbuilder.h"
 #include <string.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 int arg_debug = 0;
 int arg_appimage = 0;
+int arg_build_timeout = 0;
 
 static const char *const usage_str =
 	"Firejail profile builder\n"
-	"Usage: firejail [--debug] --build[=profile-file] program-and-arguments\n";
+	"Usage: firejail [--debug] --build[=profile-file] [--build-timeout=SECONDS] program-and-arguments\n";
 
 static void usage(void) {
 	puts(usage_str);
@@ -81,7 +85,19 @@ printf("\n");
 			prof_file = argv[i] + 8;
 		}
 		else if (strncmp(argv[i], "--caps.keep=", 12) == 0)
-			; // accept and pass through to build_profile (it will forward + print it)
+			; // accepted and forwarded by build_profile()
+		else if (strncmp(argv[i], "--build-timeout=", 16) == 0) {
+			const char *p = argv[i] + 16;
+			char *end = NULL;
+
+			errno = 0;
+			unsigned long v = strtoul(p, &end, 10);
+			if (errno != 0 || end == p || *end != '\0' || v == 0 || v > (unsigned long)INT_MAX) {
+				fprintf(stderr, "Error fbuilder: invalid --build-timeout value, expected seconds as a positive integer\n");
+				exit(1);
+			}
+			arg_build_timeout = (int) v;
+		}
 		else {
 			if (*argv[i] == '-') {
 				fprintf(stderr, "Error fbuilder: invalid program\n");
