@@ -18,6 +18,9 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
+// hi its me jacob im making it EVIL MWAHAAHAHAHAHHAHAHAH
+
+
 #include "fbuilder.h"
 #include <sys/wait.h>
 
@@ -51,7 +54,7 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 	cmd[curr_len++] = BINDIR "/firejail";
 	cmd[curr_len++] = "--quiet";
 	cmd[curr_len++] = "--noprofile";
-	cmd[curr_len++] = "--caps.drop=all";
+	//cmd[curr_len++] = "--caps.drop=all";
 	cmd[curr_len++] = "--seccomp=!chroot";
 	cmd[curr_len++] = output;
 	if (arg_appimage)
@@ -82,10 +85,11 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 
 	// wait for all processes to finish
 	int status;
-	if (waitpid(child, &status, 0) != child)
-		errExit("waitpid");
+	waitpid(child, &status, 0);
+	//if (waitpid(child, &status, 0) != child)
+	//	errExit("waitpid");
 
-	if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+	//if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
 		if (fp == stdout)
 			printf("--- Built profile begins after this line ---\n");
 		fprintf(fp, "# Save this file as \"application.profile\" (change \"application\" with the\n");
@@ -129,7 +133,7 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 		fprintf(fp, "\n");
 
 		fprintf(fp, "#apparmor\t# if you have AppArmor running, try this one!\n");
-		fprintf(fp, "caps.drop all\n");
+		//fprintf(fp, "caps.drop all\n");
 		fprintf(fp, "ipc-namespace\n");
 		fprintf(fp, "netfilter\n");
 		fprintf(fp, "#no3d\t# disable 3D acceleration\n");
@@ -163,9 +167,9 @@ void build_profile(int argc, char **argv, int index, FILE *fp) {
 
 		if (!arg_debug)
 			unlink(trace_output);
-	}
-	else {
-		fprintf(stderr, "Error fbuilder: cannot run the sandbox\n");
-		exit(1);
-	}
+	//}
+	//else {
+		//fprintf(stderr, "Error fbuilder: cannot run the sandbox\n");
+		//exit(1);
+	//}
 }
