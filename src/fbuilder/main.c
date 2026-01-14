@@ -18,6 +18,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 #include "fbuilder.h"
+#include <string.h>
+
 int arg_debug = 0;
 int arg_appimage = 0;
 
@@ -78,6 +80,8 @@ printf("\n");
 			}
 			prof_file = argv[i] + 8;
 		}
+		else if (strncmp(argv[i], "--caps.keep=", 12) == 0)
+			; // accept and pass through to build_profile (it will forward + print it)
 		else {
 			if (*argv[i] == '-') {
 				fprintf(stderr, "Error fbuilder: invalid program\n");
