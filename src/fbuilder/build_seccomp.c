@@ -22,6 +22,15 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#include <sys/stat.h>
+
+/*
+ * build_seccomp(): parse RAW strace output (not strace -c, not firejail --trace)
+ * and emit a seccomp.keep line with actual syscalls observed.
+ *
+ * This avoids the “0 syscalls total” issue you saw when you were feeding it
+ * Firejail’s --trace log format.
+ */
 
 static int add_unique(char **arr, int *n, int cap, const char *s) {
 	if (!s || !*s)
@@ -54,7 +63,9 @@ static int cmp_str(const void *a, const void *b) {
 }
 
 static const char *skip_pid_prefix(const char *line) {
-	// strace can prefix with:  [pid 12345]  openat(...)
+	// Examples:
+	//   [pid 12345] openat(...)
+	//   openat(...)
 	const char *p = line;
 	while (isspace((unsigned char)*p)) p++;
 
@@ -71,13 +82,13 @@ static const char *skip_pid_prefix(const char *line) {
 static int extract_syscall_name(const char *line, char *out, size_t outsz) {
 	const char *p = skip_pid_prefix(line);
 
-	// ignore noise lines
+	// Ignore common non-syscall lines
 	if (strncmp(p, "+++", 3) == 0) return 0;
 	if (strncmp(p, "---", 3) == 0) return 0;
 	if (strncmp(p, "strace:", 7) == 0) return 0;
-	if (strncmp(p, "Process", 7) == 0) return 0;
+	if (strncmp(p, "Process ", 8) == 0) return 0;
 
-	// syscall name begins with [A-Za-z_]
+	// Syscall name begins with alpha or underscore
 	if (!isalpha((unsigned char)*p) && *p != '_')
 		return 0;
 
@@ -87,7 +98,7 @@ static int extract_syscall_name(const char *line, char *out, size_t outsz) {
 	}
 	out[i] = '\0';
 
-	// require '(' after the name (normal syscall line format)
+	// Require '(' after optional whitespace; that’s the normal “syscall(args” format.
 	while (isspace((unsigned char)*p)) p++;
 	if (*p != '(')
 		return 0;
@@ -117,7 +128,6 @@ void build_seccomp(const char *fname, FILE *fp) {
 	char name[128];
 
 	while (fgets(buf, MAX_BUF, in)) {
-		// strip newline
 		char *nl = strchr(buf, '\n');
 		if (nl) *nl = '\0';
 
@@ -127,7 +137,6 @@ void build_seccomp(const char *fname, FILE *fp) {
 
 	fclose(in);
 
-	// stable output
 	qsort(syscalls, n, sizeof(char *), cmp_str);
 
 	if (n == 0) {
@@ -139,7 +148,6 @@ void build_seccomp(const char *fname, FILE *fp) {
 		return;
 	}
 
-	// Emit a real seccomp.keep line (this is what you asked for: actual syscalls collected).
 	fprintf(fp, "seccomp.keep ");
 	for (int i = 0; i < n; i++) {
 		if (i) fprintf(fp, ",");
@@ -153,4 +161,116 @@ void build_seccomp(const char *fname, FILE *fp) {
 	fprintf(fp, "# running your sandbox.\n");
 
 	free_list(syscalls, n);
+}
+
+/*************************************************
+ * build_protocol()
+ * (RESTORED) — this is why your link was failing.
+ *************************************************/
+
+static int unix_s = 0;
+static int inet = 0;
+static int inet6 = 0;
+static int netlink = 0;
+static int packet = 0;
+static int bluetooth = 0;
+
+static void process_protocol(const char *fname) {
+	assert(fname);
+
+	FILE *fp = fopen(fname, "r");
+	if (!fp) {
+		fprintf(stderr, "Error fbuilder: cannot open %s\n", fname);
+		exit(1);
+	}
+
+	char buf[MAX_BUF];
+	while (fgets(buf, MAX_BUF, fp)) {
+		char *ptr = strchr(buf, '\n');
+		if (ptr)
+			*ptr = '\0';
+
+		// parse line: 4:prog:socket AF_INET ...:0
+		ptr = buf;
+		if (!isdigit((unsigned char)*ptr))
+			continue;
+		while (isdigit((unsigned char)*ptr))
+			ptr++;
+		if (*ptr != ':')
+			continue;
+		ptr++;
+
+		ptr = strchr(ptr, ':');
+		if (!ptr)
+			continue;
+		ptr++;
+		if (strncmp(ptr, "socket ", 7) == 0)
+			ptr += 7;
+		else
+			continue;
+
+		if (strncmp(ptr, "AF_LOCAL ", 9) == 0)
+			unix_s = 1;
+		else if (strncmp(ptr, "AF_INET ", 8) == 0)
+			inet = 1;
+		else if (strncmp(ptr, "AF_INET6 ", 9) == 0)
+			inet6 = 1;
+		else if (strncmp(ptr, "AF_NETLINK ", 11) == 0)
+			netlink = 1;
+		else if (strncmp(ptr, "AF_PACKET ", 10) == 0)
+			packet = 1;
+		else if (strncmp(ptr, "AF_BLUETOOTH ", 13) == 0)
+			bluetooth = 1;
+	}
+
+	fclose(fp);
+}
+
+// process fname, fname.1, fname.2, fname.3, fname.4, fname.5
+void build_protocol(const char *fname, FILE *fp) {
+	assert(fname);
+
+	// reset (important if build_protocol is called more than once)
+	unix_s = inet = inet6 = netlink = packet = bluetooth = 0;
+
+	process_protocol(fname);
+
+	struct stat s;
+	for (int i = 1; i <= 5; i++) {
+		char *newname;
+		if (asprintf(&newname, "%s.%d", fname, i) == -1)
+			errExit("asprintf");
+		if (stat(newname, &s) == 0)
+			process_protocol(newname);
+		free(newname);
+	}
+
+	int net = 0;
+	if (unix_s || inet || inet6 || netlink || packet || bluetooth) {
+		fprintf(fp, "protocol ");
+		if (unix_s)
+			fprintf(fp, "unix,");
+		if (inet || inet6) {
+			fprintf(fp, "inet,inet6,");
+			net = 1;
+		}
+		if (netlink)
+			fprintf(fp, "netlink,");
+		if (packet) {
+			fprintf(fp, "packet,");
+			net = 1;
+		}
+		if (bluetooth) {
+			fprintf(fp, "bluetooth");
+			net = 1;
+		}
+		fprintf(fp, "\n");
+	}
+
+	if (net == 0)
+		fprintf(fp, "net none\n");
+	else {
+		fprintf(fp, "#net eth0\n");
+		fprintf(fp, "netfilter\n");
+	}
 }
